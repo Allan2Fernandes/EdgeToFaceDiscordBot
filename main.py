@@ -6,11 +6,23 @@ import matplotlib.pyplot as plt
 import tensorflow as tf
 import numpy as np
 import cv2
+import os
 
+#os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
 client = discord.Client(intents=discord.Intents.all())
-model_path = "C:/Users/allan/PycharmProjects/Edge2Face/Models/Epoch5/Generator"
-generator_model = tf.keras.models.load_model(model_path)
+models_folder_path = "C:/Users/allan/PycharmProjects/Edge2Face/Models"
+model_path = "C:/Users/allan/PycharmProjects/Edge2Face/Models/Epoch9/Generator"
+model_dictionary = {}
+generator_model = None
+#generator_model = tf.keras.models.load_model(model_path)
+list_of_models = [
+    "Epoch1",
+    "Epoch5",
+    "Epoch10",
+    "Epoch15",
+    "Epoch19"
+]
 
 
 def get_img_from_url(url):
@@ -23,6 +35,9 @@ def plot_image(img):
     plt.show()
     pass
 
+def get_list_of_models(path):
+    list_of_models = os.listdir(path)
+    return list_of_models
 
 
 def post_process_tensor(tensor):
@@ -71,44 +86,71 @@ def preprocess_input_image(image):
     #Resize the image to the correct dimensions for the generator
     image_tensor = cv2.resize(image_tensor, (256, 256), interpolation=cv2.INTER_CUBIC)
     #Blur the image to clean background edges
-    blurred_image = cv2.GaussianBlur(image_tensor, (3, 3), 0)
+    #blurred_image = cv2.GaussianBlur(image_tensor, (3, 3), 0)
     #Apply the edge detection filter
-    edge_image = cv2.Canny(blurred_image, threshold1=140, threshold2=140)
+    edge_image = cv2.Canny(image_tensor, threshold1=140, threshold2=140)
     #Expand dims to input into generator
-    edge_image = tf.expand_dims(tf.expand_dims(edge_image, axis = 0), axis = -1)
+    edge_tensor = tf.expand_dims(tf.expand_dims(edge_image, axis = 0), axis = -1)
     #Expand channels to input into generator
-    edge_image = tf.tile(edge_image, [1,1,1,3])
-    return edge_image
+    edge_tensor = tf.tile(edge_tensor, [1,1,1,3])
+    return edge_tensor, edge_image
+
+
 
 @client.event
 async def on_ready():
     print("We have logged in as {0.user}".format(client))
+    channel = client.get_channel(982034782164754525)
+
+    #list_of_models = get_list_of_models(models_folder_path)
+    for model_name in list_of_models:
+        model_path = os.path.join(models_folder_path, model_name) + "/Generator"
+        model_dictionary[model_name] = tf.keras.models.load_model(model_path)
+        pass
+
+    await channel.send("Available models: {0}".format(list_of_models))
     pass
 
 @client.event
 async def on_message(message):
+
     if message.author == client.user: #You don't want it to reply to itself
         return
+    command = message.content
 
-    if message.content.startswith('T'):
+    if message.content.startswith('Epoch'):
+        if command not in list_of_models:
+            await message.channel.send("Model not found")
+            return
+        else:
+            generator_model = model_dictionary[str(command)]
+
         #This is colour image
         img = get_img_from_url(message.attachments[0])
         #Translate to edges only
-        img = preprocess_input_image(img)
+        img, edge_image = preprocess_input_image(img)
         #Preprocess the tensor scale
         img = preprocess_tensor(img)
         #Pass the edges into generator
         reconstructed_image = generator_model(img)
         reconstructed_image = reconstructed_image[0]
         reconstructed_image = post_process_tensor(reconstructed_image)
-        #Save the generated image locally
+        #Save the generated generated image locally
         image_file = Image.fromarray(reconstructed_image)
         image_file.save("Images/reconstructed_image.jpeg")
+
+        #Save the edge image locally
+        edge_image_file = Image.fromarray(edge_image)
+        edge_image_file.save("Images/edge_image.jpeg")
+
+        #Attach the edge image in a message
+        await message.channel.send("Edges detected", file=discord.File("Images/edge_image.jpeg"))
+
         #Attach the file in a message and send it in the channel
-        await message.channel.send(file=discord.File("Images/reconstructed_image.jpeg"))
+        await message.channel.send("Reconstructed image", file=discord.File("Images/reconstructed_image.jpeg"))
         pass
     pass
 
 
 
-client.run('Token')
+client.run('TOKEN')
